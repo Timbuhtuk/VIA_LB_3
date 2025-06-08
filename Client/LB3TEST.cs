@@ -2,12 +2,6 @@
 
 namespace Client
 {
-    public enum DataType
-    {
-        Json,
-        Xml,
-        Csv
-    }
     public partial class LB3TEST : Form
     {
         public DataType currentType = DataType.Json;
@@ -57,6 +51,7 @@ namespace Client
         private void button4_Click(object sender, EventArgs e)
         {
             string result;
+
             switch (currentType)
             {
                 case DataType.Json:
@@ -75,10 +70,19 @@ namespace Client
 
             var server = new UDPAsyncClient();
             server.Boot();
-            server.Send(new Request { dateTime = DateTime.Now, text = result });
-            //radioButton1.Enabled = true;
-            //radioButton2.Enabled = true;
-            //radioButton3.Enabled = true;
+
+            Type eventType = currentEvent.GetType();
+            Type genericType = eventType.GetGenericArguments()[0];
+
+            var request = new Request
+            {
+                dateTime = DateTime.Now,
+                text = result,
+                convertingType = (int)currentType,
+                eventType = genericType.AssemblyQualifiedName! // ВАЖНО: строка, не typeof(int)
+            };
+
+            server.Send(request);
         }
 
         private void radioButton1_CheckedChanged(object sender, EventArgs e)

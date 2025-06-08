@@ -27,45 +27,74 @@ public class UDPAsyncServer : IServer
         }
     }
 
+    private readonly string logFilePath = "events_log.json";
+
     private async Task HandleClientAsync(UdpReceiveResult result)
     {
         string msg = Encoding.UTF8.GetString(result.Buffer);
         Log($"Получен запрос от {result.RemoteEndPoint}: {msg}");
 
         Response response;
+
         try
         {
             Request? request = JsonSerializer.Deserialize<Request>(msg);
 
-            if (request == null || string.IsNullOrWhiteSpace(request.text))
+            if (request == null || string.IsNullOrWhiteSpace(request.text) || string.IsNullOrWhiteSpace(request.eventType))
             {
                 response = new Response { IsSuccess = false, Error = "Неверное тело запроса." };
             }
-            else if (!Directory.Exists(request.text))
-            {
-                response = new Response { IsSuccess = false, Error = "Каталог не существует." };
-            }
             else
             {
-                string[] files = Directory.GetFiles(request.text);
-                response = new Response
+                Type? typeArg = Type.GetType(request.eventType);
+                if (typeArg == null)
                 {
-                    IsSuccess = true,
-                    dateTime = DateTime.Now,
-                    content = new List<string>(files)
-                };
+                    response = new Response { IsSuccess = false, Error = "Не удалось определить тип события." };
+                }
+                else
+                {
+                    Type targetType = typeof(BasicEvent<>).MakeGenericType(typeArg);
+
+                    IEventConverter converter = request.convertingType switch
+                    {
+                        (int)DataType.Json => new JsonEventSerializer(),
+                        (int)DataType.Xml => new XmlEventSerializer(),
+                        (int)DataType.Csv => new CsvEventSerializer(),
+                        _ => throw new NotSupportedException("Неизвестный тип сериализации")
+                    };
+
+                    var method = converter.GetType().GetMethod("Deserialize")!.MakeGenericMethod(typeArg);
+                    object? deserialized = method.Invoke(converter, new object[] { request.text });
+
+
+                    string json = JsonSerializer.Serialize(deserialized, new JsonSerializerOptions
+                    {
+                        WriteIndented = true
+                    });
+
+
+                    await File.AppendAllTextAsync(logFilePath, json + Environment.NewLine);
+
+                    response = new Response
+                    {
+                        IsSuccess = true,
+                    };
+                }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            response = new Response { IsSuccess = false, Error = "Incorrect request body." };
+            response = new Response
+            {
+                IsSuccess = false,
+                Error = $"Ошибка обработки запроса: {ex.Message}"
+            };
         }
 
-        string responseJson = JsonSerializer.Serialize(response);
-        byte[] responseBytes = Encoding.UTF8.GetBytes(responseJson);
-
+        byte[] responseBytes = JsonSerializer.SerializeToUtf8Bytes(response);
         await udpClient.SendAsync(responseBytes, responseBytes.Length, result.RemoteEndPoint);
     }
+
 
     public void Close()
     {
